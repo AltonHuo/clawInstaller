@@ -10,7 +10,6 @@ on:
 env:
   NODE_VERSION: "v24.14.0"
   GIT_VERSION: "v2.44.0"
-  GITHUB_PROXY: ""  # CI 环境无需代理
 
 jobs:
   build:
@@ -56,55 +55,66 @@ jobs:
         New-Item -ItemType Directory -Force -Path ./package/data
 
     - name: Download and extract Node.js
+      shell: pwsh
       run: |
-        $nodeUrl = "https://nodejs.org/dist/${{ env.NODE_VERSION }}/node-${{ env.NODE_VERSION }}-win-x64.zip"
+        $ErrorActionPreference = "Stop"
+        $nodeUrl = "https://registry.npmmirror.com/-/binary/node/${{ env.NODE_VERSION }}/node-${{ env.NODE_VERSION }}-win-x64.zip"
         Write-Host "Downloading Node.js from $nodeUrl"
-        Invoke-WebRequest -Uri $nodeUrl -OutFile node.zip
+        Invoke-WebRequest -Uri $nodeUrl -OutFile node.zip -UseBasicParsing
+        Write-Host "Extracting Node.js..."
         Expand-Archive -Path node.zip -DestinationPath ./package/runtime -Force
-        # 重命名为 nodejs
         $nodeDir = Get-ChildItem -Path ./package/runtime -Filter "node-*" -Directory | Select-Object -First 1
+        if ($null -eq $nodeDir) { throw "Node.js extraction failed - no node-* directory found" }
         Rename-Item -Path $nodeDir.FullName -NewName "nodejs"
         Remove-Item node.zip
+        # 验证
+        if (!(Test-Path "./package/runtime/nodejs/node.exe")) { throw "node.exe not found after extraction!" }
+        Write-Host "✓ Node.js ready"
 
     - name: Download and extract MinGit
+      shell: pwsh
       run: |
+        $ErrorActionPreference = "Stop"
         $gitUrl = "https://github.com/git-for-windows/git/releases/download/${{ env.GIT_VERSION }}.windows.1/MinGit-2.44.0-64-bit.zip"
         Write-Host "Downloading MinGit from $gitUrl"
-        Invoke-WebRequest -Uri $gitUrl -OutFile mingit.zip
+        Invoke-WebRequest -Uri $gitUrl -OutFile mingit.zip -UseBasicParsing
         New-Item -ItemType Directory -Force -Path ./package/runtime/git_env
         Expand-Archive -Path mingit.zip -DestinationPath ./package/runtime/git_env -Force
         Remove-Item mingit.zip
+        # 验证
+        if (!(Test-Path "./package/runtime/git_env/cmd/git.exe")) { throw "git.exe not found after extraction!" }
+        Write-Host "✓ MinGit ready"
 
     - name: Setup OpenClaw app with npm install
+      shell: pwsh
       run: |
-        $nodejsDir = Resolve-Path "./package/runtime/nodejs"
+        $ErrorActionPreference = "Stop"
+        $nodejsDir = (Resolve-Path "./package/runtime/nodejs").Path
         $appDir = "./package/runtime/openclaw_app"
         New-Item -ItemType Directory -Force -Path $appDir
 
         # 创建 package.json
-        @"
-        {
-          "name": "openclaw-env",
-          "version": "1.0.0",
-          "private": true
-        }
-        "@ | Set-Content -Path "$appDir/package.json" -Encoding UTF8
+        $packageJson = '{"name":"openclaw-env","version":"1.0.0","private":true}'
+        Set-Content -Path "$appDir/package.json" -Value $packageJson -Encoding UTF8
 
         # 使用便携 Node.js 的 npm 来安装 openclaw
         $env:PATH = "$nodejsDir;$env:PATH"
         
-        # 配置 npm 镜像 (可选, CI 一般网络畅通)
+        # 配置 npm 镜像
         & "$nodejsDir/npm.cmd" config set registry https://registry.npmmirror.com
 
         # 安装 openclaw
         Push-Location $appDir
         & "$nodejsDir/npm.cmd" install openclaw --no-fund --no-audit
+        if ($LASTEXITCODE -ne 0) { throw "npm install openclaw failed with exit code $LASTEXITCODE" }
         Pop-Location
+        Write-Host "✓ OpenClaw installed"
 
     # ==========================================
     # 3. 下载 Skills 工具
     # ==========================================
     - name: Download Skills tools
+      shell: pwsh
       run: |
         $skillsDir = "./package/runtime/skills_bin"
         New-Item -ItemType Directory -Force -Path $skillsDir
@@ -122,7 +132,7 @@ jobs:
           Write-Host "Downloading $($tool.Name)..."
           $zipPath = "$skillsDir/$($tool.Name).zip"
           try {
-            Invoke-WebRequest -Uri $tool.Url -OutFile $zipPath
+            Invoke-WebRequest -Uri $tool.Url -OutFile $zipPath -UseBasicParsing
             $extractDir = "$skillsDir/$($tool.Name)"
             Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
             Remove-Item $zipPath
@@ -136,21 +146,38 @@ jobs:
     # 4. 组装最终包
     # ==========================================
     - name: Assemble package
+      shell: pwsh
       run: |
+        $ErrorActionPreference = "Stop"
+
         # 复制 Launcher exe 到包根目录
         Copy-Item ./publish_output/OpenClawInstaller.exe ./package/OpenClaw.exe
 
-        # 设置 runtime 和 data 目录的隐藏属性
+        # 设置 runtime 目录的隐藏属性
         $runtimeDir = Get-Item "./package/runtime"
         $runtimeDir.Attributes = $runtimeDir.Attributes -bor [IO.FileAttributes]::Hidden
 
-        # 生成备用启动脚本 (以防 WebView2 不可用)
-        @"
-        @echo off
-        pushd "%~dp0"
-        OpenClaw.exe
-        popd
-        "@ | Set-Content -Path "./package/启动OpenClaw.bat" -Encoding Default
+        # 生成备用启动脚本
+        Set-Content -Path "./package/启动OpenClaw.bat" -Value "@echo off`r`npushd `"%~dp0`"`r`nOpenClaw.exe`r`npopd" -Encoding Default
+
+        # 验证包内容
+        Write-Host "=== Package contents ==="
+        Get-ChildItem -Path ./package -Recurse -Depth 2 | Format-Table FullName, Length -AutoSize
+        
+        # 关键文件检查
+        $checks = @(
+          "./package/OpenClaw.exe",
+          "./package/runtime/nodejs/node.exe",
+          "./package/runtime/git_env/cmd/git.exe",
+          "./package/runtime/openclaw_app/package.json"
+        )
+        foreach ($check in $checks) {
+          if (Test-Path $check) {
+            Write-Host "✓ $check"
+          } else {
+            throw "✗ MISSING: $check"
+          }
+        }
 
     - name: Generate Version Tag
       id: tag
@@ -161,8 +188,11 @@ jobs:
     # 5. 打包并发布
     # ==========================================
     - name: Create ZIP package
+      shell: pwsh
       run: |
         Compress-Archive -Path ./package/* -DestinationPath ./OpenClaw-Windows-x64.zip -Force
+        $size = (Get-Item ./OpenClaw-Windows-x64.zip).Length / 1MB
+        Write-Host "ZIP size: $([math]::Round($size, 2)) MB"
 
     - name: Create Release and Upload
       if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -177,20 +207,19 @@ jobs:
 
           ### 包含内容
           - OpenClaw Launcher (自包含, 无需安装 .NET)
-          - Node.js v24 (便携版)
-          - MinGit v2.44 (便携版)
+          - Node.js (便携版)
+          - MinGit (便携版)
           - OpenClaw 核心组件 (已预安装)
           - Skills 工具集 (gh, uv, ffmpeg, camsnap, blucli, gog)
 
           ### 首次使用
           1. 解压 ZIP 到任意目录
           2. 双击 `OpenClaw.exe`
-          3. 按提示配置 API Key
+          3. 按提示运行 Onboard 向导配置 API Key
           4. 开始聊天!
 
           ### 安全提示
           - 本程序所有数据存储在解压目录下, 不会修改系统注册表或全局环境变量
-          - 如有安全顾虑, 可在虚拟机或沙盒中运行: https://github.com/sandboxie-plus/Sandboxie/releases
         draft: false
         prerelease: false
         files: ./OpenClaw-Windows-x64.zip
