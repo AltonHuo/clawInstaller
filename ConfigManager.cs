@@ -15,10 +15,42 @@ namespace OpenClawInstaller
         private readonly string dataDir;
         private readonly string openclawConfigDir;
 
+        /// <summary>
+        /// 运行时目录 — 自动检测:
+        ///   新布局: baseDir/runtime/ (CI 预构建包)
+        ///   旧布局: baseDir/ (原安装器直接部署)
+        /// </summary>
+        public string RuntimeDir { get; }
+
         public ConfigManager(string baseDir)
         {
             this.baseDir = Path.GetFullPath(baseDir);
+
+            // 自动检测运行时目录布局
+            string newLayout = Path.Combine(this.baseDir, "runtime");
+            if (Directory.Exists(Path.Combine(newLayout, "nodejs"))
+                || Directory.Exists(Path.Combine(newLayout, "openclaw_app")))
+            {
+                RuntimeDir = newLayout;
+            }
+            else
+            {
+                // 旧布局: nodejs/ 等直接在 baseDir 下
+                RuntimeDir = this.baseDir;
+            }
+
             this.dataDir = Path.Combine(this.baseDir, "data");
+            // 旧布局兼容: 如果没有 data 目录，用 baseDir 自身
+            if (!Directory.Exists(this.dataDir))
+            {
+                // 检查旧模式下 .openclaw 是否在用户目录或 baseDir
+                string altDataDir = this.baseDir;
+                if (Directory.Exists(Path.Combine(altDataDir, ".openclaw"))
+                    || File.Exists(Path.Combine(altDataDir, "gateway.cmd")))
+                {
+                    this.dataDir = altDataDir;
+                }
+            }
             this.openclawConfigDir = Path.Combine(dataDir, ".openclaw");
         }
 
@@ -36,14 +68,17 @@ namespace OpenClawInstaller
         /// </summary>
         public bool CheckRuntimeIntegrity(out string errorMessage)
         {
-            string runtimeDir = Path.Combine(baseDir, "runtime");
-            string nodeExe = Path.Combine(runtimeDir, "nodejs", "node.exe");
-            string appDir = Path.Combine(runtimeDir, "openclaw_app");
+            string nodeExe = Path.Combine(RuntimeDir, "nodejs", "node.exe");
+            string appDir = Path.Combine(RuntimeDir, "openclaw_app");
             string packageJson = Path.Combine(appDir, "package.json");
 
             if (!File.Exists(nodeExe))
             {
-                errorMessage = $"找不到 Node.js 运行时:\n{nodeExe}\n\n请确保解压了完整的安装包。";
+                errorMessage = $"找不到 Node.js 运行时:\n{nodeExe}\n\n" +
+                    $"检测的目录: {RuntimeDir}\n\n" +
+                    "请确保:\n" +
+                    "1. 解压了完整的安装包, 或\n" +
+                    "2. 使用 --install 参数运行在线安装模式";
                 return false;
             }
 

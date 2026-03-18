@@ -207,7 +207,7 @@ namespace OpenClawInstaller
                 AppendLog("[系统] 正在启动 OpenClaw Gateway...");
 
                 int port = configManager.GetGatewayPort();
-                gatewayManager = new GatewayManager(baseDir, port);
+                gatewayManager = new GatewayManager(baseDir, configManager.RuntimeDir, port);
                 gatewayManager.OnOutput += msg => BeginInvoke(() => AppendLog($"[Gateway] {msg}"));
                 gatewayManager.OnError += msg => BeginInvoke(() => AppendLog($"[Gateway ERR] {msg}"));
                 gatewayManager.OnExited += code => BeginInvoke(() =>
@@ -290,7 +290,7 @@ namespace OpenClawInstaller
             await Task.Delay(1000);
 
             int port = configManager.GetGatewayPort();
-            gatewayManager = new GatewayManager(baseDir, port);
+            gatewayManager = new GatewayManager(baseDir, configManager.RuntimeDir, port);
             gatewayManager.OnOutput += msg => BeginInvoke(() => AppendLog($"[Gateway] {msg}"));
             gatewayManager.OnError += msg => BeginInvoke(() => AppendLog($"[Gateway ERR] {msg}"));
             gatewayManager.OnExited += code => BeginInvoke(() =>
@@ -317,10 +317,9 @@ namespace OpenClawInstaller
 
         private void RunOnboardInTerminal()
         {
-            string runtimeDir = Path.Combine(baseDir, "runtime");
-            string nodejsDir = Path.Combine(runtimeDir, "nodejs");
-            string gitCmdDir = Path.Combine(runtimeDir, "git_env", "cmd");
-            string appDir = Path.Combine(runtimeDir, "openclaw_app");
+            string nodejsDir = Path.Combine(configManager.RuntimeDir, "nodejs");
+            string gitCmdDir = Path.Combine(configManager.RuntimeDir, "git_env", "cmd");
+            string appDir = Path.Combine(configManager.RuntimeDir, "openclaw_app");
             string dataDir = Path.Combine(baseDir, "data");
 
             // 构建 PATH

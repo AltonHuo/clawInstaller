@@ -15,6 +15,7 @@ namespace OpenClawInstaller
     {
         private Process? gatewayProcess;
         private readonly string baseDir;
+        private readonly string runtimeDir;
         private readonly int port;
         private bool disposed;
 
@@ -27,11 +28,13 @@ namespace OpenClawInstaller
 
         public bool IsRunning => gatewayProcess != null && !gatewayProcess.HasExited;
 
-        /// <param name="baseDir">应用根目录 (包含 runtime/ 和 data/ 的那一层)</param>
+        /// <param name="baseDir">应用根目录 (exe 所在目录)</param>
+        /// <param name="runtimeDir">运行时目录 (包含 nodejs/, git_env/, openclaw_app/ 的目录)</param>
         /// <param name="port">Gateway 监听端口, 默认 3210</param>
-        public GatewayManager(string baseDir, int port = 3210)
+        public GatewayManager(string baseDir, string runtimeDir, int port = 3210)
         {
             this.baseDir = Path.GetFullPath(baseDir);
+            this.runtimeDir = Path.GetFullPath(runtimeDir);
             this.port = port;
         }
 
@@ -42,7 +45,6 @@ namespace OpenClawInstaller
         {
             if (IsRunning) return;
 
-            string runtimeDir = Path.Combine(baseDir, "runtime");
             string nodejsDir = Path.Combine(runtimeDir, "nodejs");
             string gitCmdDir = Path.Combine(runtimeDir, "git_env", "cmd");
             string appDir = Path.Combine(runtimeDir, "openclaw_app");
