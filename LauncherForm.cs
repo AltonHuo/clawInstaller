@@ -186,7 +186,7 @@ namespace OpenClawInstaller
 
                     // 首次运行需跑 onboard, 提示用户
                     var result = MessageBox.Show(
-                        "检测到首次运行 OpenClaw。\n\n需要先运行 Onboard 向导进行初始化配置（设置 API Key 等）。\n\n点击"确定"打开终端运行向导。",
+                        "检测到首次运行 OpenClaw。\n\n需要先运行 Onboard 向导进行初始化配置（设置 API Key 等）。\n\n点击 [确定] 打开终端运行向导。",
                         "首次配置",
                         MessageBoxButtons.OKCancel,
                         MessageBoxIcon.Information);
@@ -195,7 +195,7 @@ namespace OpenClawInstaller
                     {
                         RunOnboardInTerminal();
                         MessageBox.Show(
-                            "请在弹出的终端中完成 Onboard 配置。\n完成后点击"确定"继续启动 Gateway。",
+                            "请在弹出的终端中完成 Onboard 配置。\n完成后点击 [确定] 继续启动 Gateway。",
                             "等待配置完成",
                             MessageBoxButtons.OK,
                             MessageBoxIcon.Information);
