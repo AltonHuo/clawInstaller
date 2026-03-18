@@ -249,8 +249,29 @@ namespace OpenClawInstaller
         {
             try
             {
-                // 设置 WebView2 用户数据目录到 data 文件夹
+                // 确保数据目录存在
                 string webviewDataDir = Path.Combine(baseDir, "data", "webview2_data");
+                Directory.CreateDirectory(webviewDataDir);
+
+                AppendLog("[系统] 正在初始化 WebView2...");
+
+                // 检查 WebView2 Runtime 是否可用
+                string? webview2Version = null;
+                try
+                {
+                    webview2Version = Microsoft.Web.WebView2.Core.CoreWebView2Environment.GetAvailableBrowserVersionString();
+                    AppendLog($"[系统] 检测到 WebView2 Runtime: {webview2Version}");
+                }
+                catch
+                {
+                    AppendLog("[警告] 未检测到 WebView2 Runtime, 尝试自动安装...");
+                    bool installed = await TryInstallWebView2RuntimeAsync();
+                    if (!installed)
+                    {
+                        throw new Exception("WebView2 Runtime 未安装且自动安装失败。");
+                    }
+                }
+
                 var env = await Microsoft.Web.WebView2.Core.CoreWebView2Environment.CreateAsync(
                     userDataFolder: webviewDataDir);
 
@@ -262,18 +283,75 @@ namespace OpenClawInstaller
             catch (Exception ex)
             {
                 AppendLog($"[WebView2 错误] {ex.Message}");
-                AppendLog("[系统] 将使用系统浏览器作为备用方案...");
+                if (ex.InnerException != null)
+                    AppendLog($"[WebView2 详情] {ex.InnerException.Message}");
 
-                // 降级: 使用系统默认浏览器打开
-                try
+                // 降级: 询问用户是否用系统浏览器
+                var result = MessageBox.Show(
+                    $"WebView2 浏览器组件加载失败:\n{ex.Message}\n\n" +
+                    "是否使用系统默认浏览器打开？\n" +
+                    "(OpenClaw 功能不受影响, 只是界面会在外部浏览器中显示)",
+                    "WebView2 加载失败",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning);
+
+                if (result == DialogResult.Yes)
                 {
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    try
                     {
-                        FileName = $"http://localhost:{port}",
-                        UseShellExecute = true
-                    });
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = $"http://localhost:{port}",
+                            UseShellExecute = true
+                        });
+                        AppendLog("[系统] 已在系统浏览器中打开。");
+                    }
+                    catch { }
                 }
-                catch { }
+            }
+        }
+
+        /// <summary>
+        /// 尝试自动下载并安装 WebView2 Evergreen Runtime。
+        /// </summary>
+        private async Task<bool> TryInstallWebView2RuntimeAsync()
+        {
+            try
+            {
+                AppendLog("[系统] 正在下载 WebView2 Runtime...");
+                string bootstrapperPath = Path.Combine(Path.GetTempPath(), "MicrosoftEdgeWebview2Setup.exe");
+
+                using var client = new System.Net.Http.HttpClient();
+                var bytes = await client.GetByteArrayAsync(
+                    "https://go.microsoft.com/fwlink/p/?LinkId=2124703");
+                await File.WriteAllBytesAsync(bootstrapperPath, bytes);
+
+                AppendLog("[系统] 正在安装 WebView2 Runtime (需要管理员权限)...");
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = bootstrapperPath,
+                    Arguments = "/silent /install",
+                    UseShellExecute = true,
+                    Verb = "runas" // 请求管理员权限
+                };
+                var process = System.Diagnostics.Process.Start(psi);
+                if (process != null)
+                {
+                    await process.WaitForExitAsync();
+                    if (process.ExitCode == 0)
+                    {
+                        AppendLog("[系统] WebView2 Runtime 安装成功!");
+                        return true;
+                    }
+                }
+
+                AppendLog("[错误] WebView2 Runtime 安装失败。");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[错误] WebView2 Runtime 下载/安装失败: {ex.Message}");
+                return false;
             }
         }
 
