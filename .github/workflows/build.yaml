@@ -153,16 +153,12 @@ jobs:
         # 复制 Launcher exe 到包根目录
         Copy-Item ./publish_output/OpenClawInstaller.exe ./package/OpenClaw.exe
 
-        # 设置 runtime 目录的隐藏属性
-        $runtimeDir = Get-Item "./package/runtime"
-        $runtimeDir.Attributes = $runtimeDir.Attributes -bor [IO.FileAttributes]::Hidden
-
         # 生成备用启动脚本
         Set-Content -Path "./package/启动OpenClaw.bat" -Value "@echo off`r`npushd `"%~dp0`"`r`nOpenClaw.exe`r`npopd" -Encoding Default
 
         # 验证包内容
         Write-Host "=== Package contents ==="
-        Get-ChildItem -Path ./package -Recurse -Depth 2 | Format-Table FullName, Length -AutoSize
+        Get-ChildItem -Path ./package -Recurse -Depth 2 -Force | Format-Table FullName, Length -AutoSize
         
         # 关键文件检查
         $checks = @(
@@ -185,13 +181,18 @@ jobs:
       run: echo "release_tag=v$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
 
     # ==========================================
-    # 5. 打包并发布
+    # 5. 打包并发布 (先打包, 再设隐藏属性说明)
     # ==========================================
     - name: Create ZIP package
       shell: pwsh
       run: |
-        Compress-Archive -Path ./package/* -DestinationPath ./OpenClaw-Windows-x64.zip -Force
-        $size = (Get-Item ./OpenClaw-Windows-x64.zip).Length / 1MB
+        # 用 .NET 的 ZipFile 来打包, 确保包含所有文件(包括隐藏的)
+        Add-Type -Assembly System.IO.Compression.FileSystem
+        $src = (Resolve-Path "./package").Path
+        $dst = (Join-Path (Get-Location) "OpenClaw-Windows-x64.zip")
+        if (Test-Path $dst) { Remove-Item $dst }
+        [System.IO.Compression.ZipFile]::CreateFromDirectory($src, $dst)
+        $size = (Get-Item $dst).Length / 1MB
         Write-Host "ZIP size: $([math]::Round($size, 2)) MB"
 
     - name: Create Release and Upload
