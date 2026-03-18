@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace OpenClawInstaller
@@ -6,16 +7,28 @@ namespace OpenClawInstaller
     internal static class Program
     {
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
-            // 关键：在启动前开启高 DPI 模式
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             ApplicationConfiguration.Initialize();
-            // 正常启动窗体
-            Application.Run(new MainForm());
+
+            // 支持双模式启动:
+            //   默认 (无参数): Launcher 模式 — 直接启动 Gateway + WebView2
+            //   --install:     Installer 模式 — 原有的在线安装器界面
+            bool isInstallerMode = args.Any(a =>
+                a.Equals("--install", StringComparison.OrdinalIgnoreCase) ||
+                a.Equals("-i", StringComparison.OrdinalIgnoreCase));
+
+            if (isInstallerMode)
+            {
+                Application.Run(new MainForm());
+            }
+            else
+            {
+                Application.Run(new LauncherForm());
+            }
         }
     }
-
 }

@@ -1,69 +1,206 @@
-name: Build and Release OpenClaw Installer
+name: Build and Release OpenClaw Launcher (Pre-built ZIP)
 
 on:
   push:
     branches: [ "main", "master" ]
   pull_request:
     branches: [ "main", "master" ]
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: "v24.14.0"
+  GIT_VERSION: "v2.44.0"
+  GITHUB_PROXY: ""  # CI 环境无需代理
 
 jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: write # 必须开启写入权限，否则无法自动创建 Release
+      contents: write
 
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0 # 获取完整历史以计算版本号
+        fetch-depth: 0
 
     - name: Setup .NET 8
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'
 
+    # ==========================================
+    # 1. 构建 Launcher.exe (自包含)
+    # ==========================================
     - name: Restore dependencies
       run: dotnet restore
 
-    - name: Publish Single File
-      # 优化点：添加了单文件压缩、ReadyToRun 预编译和去除符号文件，使 exe 更小更纯净
+    - name: Build Launcher (Self-Contained)
       run: |
         dotnet publish OpenClawInstaller.csproj `
           -c Release `
           -r win-x64 `
-          --self-contained false `
+          --self-contained true `
           -p:PublishSingleFile=true `
+          -p:PublishTrimmed=true `
+          -p:TrimMode=partial `
+          -p:EnableCompressionInSingleFile=true `
           -p:PublishReadyToRun=true `
           -p:Deterministic=true `
           -o ./publish_output
+
+    # ==========================================
+    # 2. 预构建运行时环境
+    # ==========================================
+    - name: Create runtime directories
+      run: |
+        New-Item -ItemType Directory -Force -Path ./package/runtime
+        New-Item -ItemType Directory -Force -Path ./package/data
+
+    - name: Download and extract Node.js
+      run: |
+        $nodeUrl = "https://nodejs.org/dist/${{ env.NODE_VERSION }}/node-${{ env.NODE_VERSION }}-win-x64.zip"
+        Write-Host "Downloading Node.js from $nodeUrl"
+        Invoke-WebRequest -Uri $nodeUrl -OutFile node.zip
+        Expand-Archive -Path node.zip -DestinationPath ./package/runtime -Force
+        # 重命名为 nodejs
+        $nodeDir = Get-ChildItem -Path ./package/runtime -Filter "node-*" -Directory | Select-Object -First 1
+        Rename-Item -Path $nodeDir.FullName -NewName "nodejs"
+        Remove-Item node.zip
+
+    - name: Download and extract MinGit
+      run: |
+        $gitUrl = "https://github.com/git-for-windows/git/releases/download/${{ env.GIT_VERSION }}.windows.1/MinGit-2.44.0-64-bit.zip"
+        Write-Host "Downloading MinGit from $gitUrl"
+        Invoke-WebRequest -Uri $gitUrl -OutFile mingit.zip
+        New-Item -ItemType Directory -Force -Path ./package/runtime/git_env
+        Expand-Archive -Path mingit.zip -DestinationPath ./package/runtime/git_env -Force
+        Remove-Item mingit.zip
+
+    - name: Setup OpenClaw app with npm install
+      run: |
+        $nodejsDir = Resolve-Path "./package/runtime/nodejs"
+        $appDir = "./package/runtime/openclaw_app"
+        New-Item -ItemType Directory -Force -Path $appDir
+
+        # 创建 package.json
+        @"
+        {
+          "name": "openclaw-env",
+          "version": "1.0.0",
+          "private": true
+        }
+        "@ | Set-Content -Path "$appDir/package.json" -Encoding UTF8
+
+        # 使用便携 Node.js 的 npm 来安装 openclaw
+        $env:PATH = "$nodejsDir;$env:PATH"
+        
+        # 配置 npm 镜像 (可选, CI 一般网络畅通)
+        & "$nodejsDir/npm.cmd" config set registry https://registry.npmmirror.com
+
+        # 安装 openclaw
+        Push-Location $appDir
+        & "$nodejsDir/npm.cmd" install openclaw --no-fund --no-audit
+        Pop-Location
+
+    # ==========================================
+    # 3. 下载 Skills 工具
+    # ==========================================
+    - name: Download Skills tools
+      run: |
+        $skillsDir = "./package/runtime/skills_bin"
+        New-Item -ItemType Directory -Force -Path $skillsDir
+
+        $tools = @(
+          @{ Name = "gh"; Url = "https://github.com/cli/cli/releases/download/v2.88.1/gh_2.88.1_windows_amd64.zip" },
+          @{ Name = "uv"; Url = "https://github.com/astral-sh/uv/releases/download/0.10.10/uv-x86_64-pc-windows-msvc.zip" },
+          @{ Name = "ffmpeg"; Url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-win64-gpl-shared-8.0.zip" },
+          @{ Name = "camsnap"; Url = "https://github.com/steipete/camsnap/releases/download/v0.2.0/camsnap_0.2.0_windows_amd64.zip" },
+          @{ Name = "blucli"; Url = "https://github.com/steipete/blucli/releases/download/v0.1.3/blucli-windows-amd64.zip" },
+          @{ Name = "gog"; Url = "https://github.com/steipete/gogcli/releases/download/v0.12.0/gogcli_0.12.0_windows_amd64.zip" }
+        )
+
+        foreach ($tool in $tools) {
+          Write-Host "Downloading $($tool.Name)..."
+          $zipPath = "$skillsDir/$($tool.Name).zip"
+          try {
+            Invoke-WebRequest -Uri $tool.Url -OutFile $zipPath
+            $extractDir = "$skillsDir/$($tool.Name)"
+            Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+            Remove-Item $zipPath
+            Write-Host "  ✓ $($tool.Name) installed"
+          } catch {
+            Write-Host "  ✗ Failed to download $($tool.Name): $_"
+          }
+        }
+
+    # ==========================================
+    # 4. 组装最终包
+    # ==========================================
+    - name: Assemble package
+      run: |
+        # 复制 Launcher exe 到包根目录
+        Copy-Item ./publish_output/OpenClawInstaller.exe ./package/OpenClaw.exe
+
+        # 设置 runtime 和 data 目录的隐藏属性
+        $runtimeDir = Get-Item "./package/runtime"
+        $runtimeDir.Attributes = $runtimeDir.Attributes -bor [IO.FileAttributes]::Hidden
+
+        # 生成备用启动脚本 (以防 WebView2 不可用)
+        @"
+        @echo off
+        pushd "%~dp0"
+        OpenClaw.exe
+        popd
+        "@ | Set-Content -Path "./package/启动OpenClaw.bat" -Encoding Default
 
     - name: Generate Version Tag
       id: tag
       shell: bash
       run: echo "release_tag=v$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
 
+    # ==========================================
+    # 5. 打包并发布
+    # ==========================================
+    - name: Create ZIP package
+      run: |
+        Compress-Archive -Path ./package/* -DestinationPath ./OpenClaw-Windows-x64.zip -Force
+
     - name: Create Release and Upload
+      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
-        name: OpenClaw Installer Auto-Build ${{ steps.tag.outputs.release_tag }}
+        name: OpenClaw ${{ steps.tag.outputs.release_tag }}
         body: |
-          这是由 GitHub Actions 自动生成的纯净构建版本。
-          - 源码来源: ${{ github.server_url }}/${{ github.repository }}
-          - 构建时间: ${{ steps.tag.outputs.release_tag }}
-          - 安全提示: openclaw运行后可以直接访问您的全部文件，如果您对安全有相关的问题担忧，可以在虚拟机中运行本软件将openclaw部署至虚拟机，或者您可以使用沙盒软件来运行推荐 https://github.com/sandboxie-plus/Sandboxie/releases
-          - **注**：本程序只会写入您指定的安装路径，安装完成后即可关闭或者删除，对后续使用openclaw没有任何影响。
+          ## 🦞 OpenClaw 一键启动包
+
+          **使用方式：解压 → 双击 `OpenClaw.exe` → 开始使用!**
+
+          ### 包含内容
+          - OpenClaw Launcher (自包含, 无需安装 .NET)
+          - Node.js v24 (便携版)
+          - MinGit v2.44 (便携版)
+          - OpenClaw 核心组件 (已预安装)
+          - Skills 工具集 (gh, uv, ffmpeg, camsnap, blucli, gog)
+
+          ### 首次使用
+          1. 解压 ZIP 到任意目录
+          2. 双击 `OpenClaw.exe`
+          3. 按提示配置 API Key
+          4. 开始聊天!
+
+          ### 安全提示
+          - 本程序所有数据存储在解压目录下, 不会修改系统注册表或全局环境变量
+          - 如有安全顾虑, 可在虚拟机或沙盒中运行: https://github.com/sandboxie-plus/Sandboxie/releases
         draft: false
         prerelease: false
-        files: ./publish_output/OpenClawInstaller.exe
+        files: ./OpenClaw-Windows-x64.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Upload Artifact (Backup)
       uses: actions/upload-artifact@v4
       with:
-        name: OpenClawInstaller-win-x64
-        path: ./publish_output/OpenClawInstaller.exe
-
+        name: OpenClaw-Windows-x64
+        path: ./OpenClaw-Windows-x64.zip

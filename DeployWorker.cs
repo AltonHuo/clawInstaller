@@ -10,6 +10,39 @@ namespace OpenClawInstaller
 {
     public class DeployWorker
     {
+        /// <summary>
+        /// 检查预构建运行时环境是否完整。
+        /// </summary>
+        public static bool CheckEnvironment(string baseDir, out string errorMessage)
+        {
+            string runtimeDir = Path.Combine(baseDir, "runtime");
+            
+            // 检查 Node.js
+            if (!File.Exists(Path.Combine(runtimeDir, "nodejs", "node.exe")))
+            {
+                errorMessage = "Node.js 运行时缺失";
+                return false;
+            }
+
+            // 检查 OpenClaw 应用
+            if (!File.Exists(Path.Combine(runtimeDir, "openclaw_app", "package.json")))
+            {
+                errorMessage = "OpenClaw 应用目录缺失";
+                return false;
+            }
+
+            // 检查 Git
+            if (!File.Exists(Path.Combine(runtimeDir, "git_env", "cmd", "git.exe")))
+            {
+                errorMessage = "MinGit 环境缺失";
+                return false;
+            }
+
+            errorMessage = "";
+            return true;
+        }
+
+
         private readonly string installDir;
         private readonly string githubProxy;
         private readonly bool isDebug;
