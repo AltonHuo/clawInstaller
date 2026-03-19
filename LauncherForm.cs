@@ -79,6 +79,7 @@ namespace OpenClawInstaller
             var onboardBtn = CreateToolButton("📋 Onboard 向导", (s, e) => RunOnboardInTerminal());
             var logBtn = CreateToolButton("📝 日志", (s, e) => ToggleLogPanel());
             var settingsBtn = CreateToolButton("⚙️ 设置", (s, e) => configManager.ShowSetupDialog());
+            var uninstallBtn = CreateToolButton("🗑️ 卸载", (s, e) => OpenUninstallForm());
 
             toolbar.Items.AddRange(new ToolStripItem[]
             {
@@ -88,7 +89,9 @@ namespace OpenClawInstaller
                 onboardBtn,
                 new ToolStripSeparator(),
                 logBtn,
-                settingsBtn
+                settingsBtn,
+                new ToolStripSeparator(),
+                uninstallBtn
             });
 
             // ============ 状态栏 ============
@@ -416,6 +419,24 @@ namespace OpenClawInstaller
 
             System.Diagnostics.Process.Start(psi);
             AppendLog("[系统] 已打开 Onboard 向导终端。");
+        }
+
+        private void OpenUninstallForm()
+        {
+            var confirmResult = MessageBox.Show(
+                "打开卸载工具将会停止当前正在运行的 Gateway 服务。\n\n确定要继续吗？",
+                "卸载确认",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+
+            if (confirmResult == DialogResult.No) return;
+
+            // 停止 Gateway
+            gatewayManager?.Stop();
+
+            // 打开卸载窗口，预填当前安装目录
+            var uninstallForm = new UninstallForm(baseDir);
+            uninstallForm.ShowDialog(this);
         }
 
         private void ToggleLogPanel()
