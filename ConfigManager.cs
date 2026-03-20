@@ -141,8 +141,8 @@ namespace OpenClawInstaller
         /// </summary>
         public int GetGatewayPort()
         {
-            // 默认端口，后续可从配置文件读取
-            return 3210;
+            // 默认端口 18789, 与 OpenClaw Gateway 默认一致
+            return 18789;
         }
     }
 

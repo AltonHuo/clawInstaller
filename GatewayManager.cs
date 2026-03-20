@@ -34,8 +34,8 @@ namespace OpenClawInstaller
 
         /// <param name="baseDir">应用根目录 (exe 所在目录)</param>
         /// <param name="runtimeDir">运行时目录 (包含 nodejs/, git_env/, openclaw_app/ 的目录)</param>
-        /// <param name="port">Gateway 监听端口, 默认 3210</param>
-        public GatewayManager(string baseDir, string runtimeDir, int port = 3210)
+        /// <param name="port">Gateway 监听端口, 默认 18789</param>
+        public GatewayManager(string baseDir, string runtimeDir, int port = 18789)
         {
             this.baseDir = Path.GetFullPath(baseDir);
             this.runtimeDir = Path.GetFullPath(runtimeDir);
@@ -123,6 +123,11 @@ namespace OpenClawInstaller
 
             // 注入环境变量
             psi.EnvironmentVariables["PATH"] = customPath;
+
+            // 禁止 Gateway 自动打开外部浏览器 (UI 由本应用 WebView2 承载)
+            psi.EnvironmentVariables["BROWSER"] = "none";
+            psi.EnvironmentVariables["NO_OPEN"] = "1";
+            psi.EnvironmentVariables["OPENCLAW_NO_BROWSER"] = "1";
 
             // 便携模式: 将用户数据目录指向本地 data 文件夹
             if (Directory.Exists(dataDir))
