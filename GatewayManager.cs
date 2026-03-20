@@ -1,8 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
+using System.Net.NetworkInformation;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -44,6 +48,9 @@ namespace OpenClawInstaller
         public void Start()
         {
             if (IsRunning) return;
+
+            // 先终止任何占用目标端口的已有 Gateway 进程
+            StopExistingInstances(port);
 
             string nodejsDir = Path.Combine(runtimeDir, "nodejs");
             string gitCmdDir = Path.Combine(runtimeDir, "git_env", "cmd");
@@ -238,6 +245,76 @@ namespace OpenClawInstaller
                 if (File.Exists(path)) return path;
             }
             return null;
+        }
+
+        /// <summary>
+        /// 在启动前终止所有占用目标端口的已有进程。
+        /// 通过 netstat 查找监听指定端口的 PID, 再用 taskkill 杀掉。
+        /// </summary>
+        public static void StopExistingInstances(int port)
+        {
+            try
+            {
+                var pidsOnPort = GetPidsListeningOnPort(port);
+                int selfPid = Environment.ProcessId;
+
+                foreach (int pid in pidsOnPort)
+                {
+                    if (pid == selfPid || pid == 0) continue;
+
+                    try
+                    {
+                        KillProcessTree(pid);
+                    }
+                    catch { /* 进程可能已退出 */ }
+                }
+
+                // 等待端口释放
+                if (pidsOnPort.Count > 0)
+                    Thread.Sleep(1500);
+            }
+            catch
+            {
+                // netstat 执行失败等情况, 不中断启动流程
+            }
+        }
+
+        /// <summary>
+        /// 使用 netstat 查找监听指定端口的所有 PID。
+        /// </summary>
+        private static List<int> GetPidsListeningOnPort(int port)
+        {
+            var result = new List<int>();
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "netstat",
+                Arguments = "-ano",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8
+            };
+
+            using var proc = Process.Start(psi);
+            if (proc == null) return result;
+
+            string output = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit(5000);
+
+            // 匹配格式: TCP    127.0.0.1:3210    0.0.0.0:0    LISTENING    12345
+            //           TCP    0.0.0.0:3210      0.0.0.0:0    LISTENING    12345
+            string pattern = $@"\s+(TCP|UDP)\s+\S+:{port}\s+\S+\s+LISTENING\s+(\d+)";
+            foreach (Match match in Regex.Matches(output, pattern, RegexOptions.IgnoreCase))
+            {
+                if (int.TryParse(match.Groups[2].Value, out int pid) && pid > 0)
+                {
+                    if (!result.Contains(pid))
+                        result.Add(pid);
+                }
+            }
+
+            return result;
         }
 
         /// <summary>

@@ -205,11 +205,16 @@ namespace OpenClawInstaller
                     }
                 }
 
-                // 3. 启动 Gateway
+                // 3. 停止已有实例并启动 Gateway
+                int port = configManager.GetGatewayPort();
+
+                SetStatus("正在检查已有 Gateway 实例...", true);
+                AppendLog($"[系统] 检查端口 {port} 上是否有已在运行的 Gateway...");
+                GatewayManager.StopExistingInstances(port);
+
                 SetStatus("正在启动 Gateway...", true);
                 AppendLog("[系统] 正在启动 OpenClaw Gateway...");
 
-                int port = configManager.GetGatewayPort();
                 gatewayManager = new GatewayManager(baseDir, configManager.RuntimeDir, port);
                 gatewayManager.OnOutput += msg => BeginInvoke(() => AppendLog($"[Gateway] {msg}"));
                 gatewayManager.OnError += msg => BeginInvoke(() => AppendLog($"[Gateway ERR] {msg}"));
@@ -371,6 +376,8 @@ namespace OpenClawInstaller
             await Task.Delay(1000);
 
             int port = configManager.GetGatewayPort();
+            GatewayManager.StopExistingInstances(port);
+
             gatewayManager = new GatewayManager(baseDir, configManager.RuntimeDir, port);
             gatewayManager.OnOutput += msg => BeginInvoke(() => AppendLog($"[Gateway] {msg}"));
             gatewayManager.OnError += msg => BeginInvoke(() => AppendLog($"[Gateway ERR] {msg}"));
